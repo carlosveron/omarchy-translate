@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "carlos.translate",
+  "name": "Translate",
+  "version": "1.0.0",
+  "author": "carlos",
+  "description": "Quick translate overlay (SUPER+T). Type text, translate via free MyMemory API, copy result.",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Translate.qml"
+  }
+}

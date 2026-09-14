@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# carlos.translate helper — free translation via MyMemory (no API key).
+#
+# Usage:
+#   translate --to <lang> [--from <lang>] <text...>
+#   translate --to es --from auto "Hello world"
+#   echo "Hello" | translate --to es
+#
+# Output is always a single JSON object on stdout:
+#   {"ok": true, "translated": "...", "source": "en", "target": "es"}
+#   {"ok": false, "error": "..."}
+#
+# MyMemory notes:
+# - Anonymous quota is ~5k chars/day per IP. Errors surface in `error`.
+# - `q` limit is ~500 chars per request; longer input is truncated.
+set -u
+
+TO="en"
+FROM="auto"
+TEXT=""
+
+usage() {
+  echo '{"ok": false, "error": "usage: translate --to <lang> [--from <lang>] <text>"}'
+  exit 0
+}
+
+while (($# > 0)); do
+  case "${1:-}" in
+    --to)
+      TO="${2:-}"; shift 2 ;;
+    --from)
+      FROM="${2:-}"; shift 2 ;;
+    -h|--help)
+      usage ;;
+    --)
+      shift; TEXT="$*"; break ;;
+    -*)
+      echo "{\"ok\": false, \"error\": \"unknown flag: $1\"}"
+      exit 0 ;;
+    *)
+      TEXT="$*"; break ;;
+  esac
+done
+
+# Allow piping: echo "hi" | translate --to es
+if [[ -z "$TEXT" && ! -t 0 ]]; then
+  TEXT="$(cat)"
+fi
+
+# Normalize: trim, truncate to MyMemory-friendly size.
+TEXT="$(printf '%s' "$TEXT" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+if [[ -z "$TEXT" ]]; then
+  echo '{"ok": false, "error": "empty text"}'
+  exit 0
+fi
+if [[ -z "$TO" ]]; then
+  echo '{"ok": false, "error": "missing target language"}'
+  exit 0
+fi
+# MyMemory anonymous requests cap q at ~500 chars.
+TEXT="${TEXT:0:480}"
+
+# MyMemory uses "autodetect" (not "auto") for source detection.
+if [[ "$FROM" == "auto" ]]; then
+  FROM="autodetect"
+fi
+
+export TRANSLATE_TEXT="$TEXT"
+export TRANSLATE_FROM="$FROM"
+export TRANSLATE_TO="$TO"
+
+RESPONSE="$(curl -s --max-time 20 --get \
+  --data-urlencode "q=$TEXT" \
+  --data-urlencode "langpair=$FROM|$TO" \
+  "https://api.mymemory.translated.net/get" 2>/dev/null)"
+CURL_STATUS=$?
+
+if (( CURL_STATUS != 0 )) || [[ -z "$RESPONSE" ]]; then
+  python3 -c 'import json; print(json.dumps({"ok": False, "error": "network error — check connection"}))'
+  exit 0
+fi
+
+export TRANSLATE_RESPONSE="$RESPONSE"
+python3 <<'PY'
+import json, os
+
+raw = os.environ.get("TRANSLATE_RESPONSE", "")
+try:
+    data = json.loads(raw)
+except Exception:
+    print(json.dumps({"ok": False, "error": "bad response from translation service"}))
+    raise SystemExit
+
+# MyMemory error shapes: responseStatus != 200, quotaFinished, or 429/403 strings.
+status = data.get("responseStatus")
+translated = (data.get("responseData") or {}).get("translatedText", "")
+# API sometimes returns "QUERY LENGTH LIMIT EXCEEDED" or "INVALID EMAIL" as text.
+bad_markers = ["QUERY LENGTH LIMIT EXCEEDED", "INVALID TARGET LANGUAGE", "INVALID SOURCE LANGUAGE", "NO QUERY SPECIFIED"]
+if isinstance(translated, str) and any(m in translated for m in bad_markers):
+    print(json.dumps({"ok": False, "error": translated.strip().lower().capitalize()}))
+    raise SystemExit
+
+if status != 200 or not (translated or "").strip():
+    detail = str(data.get("responseDetails", "") or "").strip()
+    if data.get("quotaFinished"):
+        detail = "daily free quota reached — try again tomorrow"
+    print(json.dumps({"ok": False, "error": detail or "translation failed"}))
+    raise SystemExit
+
+# Detect source lang: prefer top-level detectedLanguage (autodetect mode),
+# fall back to first match source (best-effort).
+source = ""
+try:
+    rd = data.get("responseData") or {}
+    if isinstance(rd.get("detectedLanguage"), str):
+        source = rd.get("detectedLanguage") or ""
+    if not source:
+        matches = data.get("matches") or []
+        if matches and isinstance(matches[0], dict):
+            source = str(matches[0].get("source", "") or "")
+except Exception:
+    source = ""
+
+print(json.dumps({
+    "ok": True,
+    "translated": translated.strip(),
+    "source": source,
+    "target": os.environ.get("TRANSLATE_TO", ""),
+}))
+PY
