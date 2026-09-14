@@ -28,6 +28,7 @@ Item {
   property bool opened: false
   property string sourceLang: "auto"
   property string targetLang: "en"
+  property string engine: "online"
   property string translatedText: ""
   property string detectedSource: ""
   property bool isLoading: false
@@ -66,6 +67,11 @@ Item {
 
   readonly property var sourceOptions: [{ value: "auto", label: "Auto detect" }].concat(langOptions)
 
+  readonly property var engineOptions: [
+    { value: "online", label: "Online" },
+    { value: "offline", label: "Offline" }
+  ]
+
   function langLabel(code) {
     if (!code) return ""
     var c = String(code).trim().toLowerCase()
@@ -85,6 +91,7 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) { payload = {} }
     if (payload.target) root.targetLang = String(payload.target)
     if (payload.source) root.sourceLang = String(payload.source)
+    if (payload.engine) root.engine = String(payload.engine)
     root.opened = true
     root.translatedText = ""
     root.detectedSource = ""
@@ -144,7 +151,7 @@ Item {
     root.translatedText = ""
     root.detectedSource = ""
     root.copySuccess = false
-    transProc.command = [root.helper, "--to", root.targetLang, "--from", root.sourceLang, q]
+    transProc.command = [root.helper, "--to", root.targetLang, "--from", root.sourceLang, "--engine", root.engine, q]
     transProc.running = true
   }
 
@@ -183,7 +190,9 @@ Item {
 
   readonly property string outputMeta: {
     if (root.translatedText !== "" && root.sourceLang === "auto" && root.detectedSource !== "")
-      return "Detected: " + root.langLabel(root.detectedSource)
+      return "Detected: " + root.langLabel(root.detectedSource) + (root.engine === "offline" ? " · offline" : "")
+    if (root.translatedText !== "" && root.engine === "offline")
+      return "offline"
     return ""
   }
 
@@ -449,6 +458,48 @@ Item {
               rowHeight: Style.space(34)
               popupRowHeight: Style.space(30)
               onChanged: function(v) { root.targetLang = v }
+            }
+          }
+
+          // Engine selector: online API vs on-device models.
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Engine"
+              color: Color.muted
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+
+            Dropdown {
+              id: engineDropdown
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(160)
+              label: ""
+              showLabel: false
+              fontFamily: Style.font.family
+              foreground: Color.foreground
+              background: Color.menu.background
+              popupBorder: Color.popups.border
+              options: root.engineOptions
+              value: root.engine
+              rowHeight: Style.space(30)
+              popupRowHeight: Style.space(30)
+              onChanged: function(v) { root.engine = v }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.engine === "offline" ? "on-device models" : "free web API"
+              color: Color.muted
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              opacity: 0.75
             }
           }
 

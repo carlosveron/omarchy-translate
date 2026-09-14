@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# carlos.translate helper — free translation via MyMemory (no API key).
+# carlos.translate helper — translation with pluggable engines.
 #
 # Usage:
-#   translate --to <lang> [--from <lang>] <text...>
+#   translate --to <lang> [--from <lang>] [--engine online|offline] <text...>
 #   translate --to es --from auto "Hello world"
+#   translate --to en --from pt --engine offline "gatinhando"
 #   echo "Hello" | translate --to es
 #
-# Output is always a single JSON object on stdout:
-#   {"ok": true, "translated": "...", "source": "en", "target": "es"}
-#   {"ok": false, "error": "..."}
+# Engines:
+#   online  — free MyMemory API (no key). Needs network, has a daily quota.
+#   offline — on-device Argos Translate models (no network after setup).
+#             Needs the venv at ~/.local/share/carlos.translate/venv plus
+#             language packages (see README). Missing es/pt/fr/de<->en pairs
+#             are downloaded on demand (needs network once, ~100MB each).
 #
-# MyMemory notes:
-# - Anonymous quota is ~5k chars/day per IP. Errors surface in `error`.
-# - `q` limit is ~500 chars per request; longer input is truncated.
+# Output is always a single JSON object on stdout:
+#   {"ok": true, "translated": "...", "source": "en", "target": "es", "engine": "online"}
+#   {"ok": false, "error": "..."}
 set -u
 
 TO="en"
 FROM="auto"
+ENGINE="online"
 TEXT=""
 
 usage() {
-  echo '{"ok": false, "error": "usage: translate --to <lang> [--from <lang>] <text>"}'
+  echo '{"ok": false, "error": "usage: translate --to <lang> [--from <lang>] [--engine online|offline] <text>"}'
   exit 0
 }
 
@@ -30,6 +35,8 @@ while (($# > 0)); do
       TO="${2:-}"; shift 2 ;;
     --from)
       FROM="${2:-}"; shift 2 ;;
+    --engine)
+      ENGINE="${2:-}"; shift 2 ;;
     -h|--help)
       usage ;;
     --)
@@ -47,7 +54,7 @@ if [[ -z "$TEXT" && ! -t 0 ]]; then
   TEXT="$(cat)"
 fi
 
-# Normalize: trim, truncate to MyMemory-friendly size.
+# Normalize: trim whitespace.
 TEXT="$(printf '%s' "$TEXT" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 if [[ -z "$TEXT" ]]; then
   echo '{"ok": false, "error": "empty text"}'
@@ -57,31 +64,35 @@ if [[ -z "$TO" ]]; then
   echo '{"ok": false, "error": "missing target language"}'
   exit 0
 fi
-# MyMemory anonymous requests cap q at ~500 chars.
-TEXT="${TEXT:0:480}"
 
-# MyMemory uses "autodetect" (not "auto") for source detection.
-if [[ "$FROM" == "auto" ]]; then
-  FROM="autodetect"
-fi
+# UI caps input at 500 chars; MyMemory anonymous requests cap q at ~500.
+TEXT="${TEXT:0:480}"
 
 export TRANSLATE_TEXT="$TEXT"
 export TRANSLATE_FROM="$FROM"
 export TRANSLATE_TO="$TO"
 
-RESPONSE="$(curl -s --max-time 20 --get \
-  --data-urlencode "q=$TEXT" \
-  --data-urlencode "langpair=$FROM|$TO" \
-  "https://api.mymemory.translated.net/get" 2>/dev/null)"
-CURL_STATUS=$?
+online_translate() {
+  local from="$TRANSLATE_FROM"
+  # MyMemory uses "autodetect" (not "auto") for source detection.
+  if [[ "$from" == "auto" ]]; then
+    from="autodetect"
+  fi
 
-if (( CURL_STATUS != 0 )) || [[ -z "$RESPONSE" ]]; then
-  python3 -c 'import json; print(json.dumps({"ok": False, "error": "network error — check connection"}))'
-  exit 0
-fi
+  local response
+  response="$(curl -s --max-time 20 --get \
+    --data-urlencode "q=$TRANSLATE_TEXT" \
+    --data-urlencode "langpair=$from|$TRANSLATE_TO" \
+    "https://api.mymemory.translated.net/get" 2>/dev/null)"
+  local curl_status=$?
 
-export TRANSLATE_RESPONSE="$RESPONSE"
-python3 <<'PY'
+  if (( curl_status != 0 )) || [[ -z "$response" ]]; then
+    python3 -c 'import json; print(json.dumps({"ok": False, "error": "network error — check connection or try the offline engine"}))'
+    exit 0
+  fi
+
+  export TRANSLATE_RESPONSE="$response"
+  python3 <<'PY'
 import json, os
 
 raw = os.environ.get("TRANSLATE_RESPONSE", "")
@@ -103,7 +114,7 @@ if isinstance(translated, str) and any(m in translated for m in bad_markers):
 if status != 200 or not (translated or "").strip():
     detail = str(data.get("responseDetails", "") or "").strip()
     if data.get("quotaFinished"):
-        detail = "daily free quota reached — try again tomorrow"
+        detail = "daily free quota reached — try the offline engine"
     print(json.dumps({"ok": False, "error": detail or "translation failed"}))
     raise SystemExit
 
@@ -126,5 +137,104 @@ print(json.dumps({
     "translated": translated.strip(),
     "source": source,
     "target": os.environ.get("TRANSLATE_TO", ""),
+    "engine": "online",
 }))
 PY
+}
+
+offline_translate() {
+  local venv_py="$HOME/.local/share/carlos.translate/venv/bin/python"
+  if [[ ! -x "$venv_py" ]]; then
+    echo '{"ok": false, "error": "offline engine not installed — see README (uv venv + argostranslate)"}'
+    exit 0
+  fi
+  # Stanza/argos log progress bars and warnings on stderr; the JSON contract
+  # lives on stdout and real failures are reported as error JSON.
+  "$venv_py" - 2>/dev/null <<'PY'
+import json, os, sys
+
+try:
+    from argostranslate import package as packages
+    from argostranslate import translate as translator
+except Exception:
+    print(json.dumps({"ok": False, "error": "offline engine broken — reinstall the venv (see README)"}))
+    raise SystemExit
+
+def norm(code):
+    c = str(code or "").strip().lower().replace("_", "-")
+    return {"zh-cn": "zh", "zh-tw": "zh"}.get(c, c.split("-")[0] if "-" in c and len(c) > 5 else c)
+
+text = os.environ.get("TRANSLATE_TEXT", "")
+frm = norm(os.environ.get("TRANSLATE_FROM", "auto"))
+to = norm(os.environ.get("TRANSLATE_TO", "en"))
+
+# Auto-detect source with langdetect (tiny, offline).
+if frm in ("auto", "autodetect"):
+    try:
+        from langdetect import detect
+        frm = norm(detect(text))
+    except Exception:
+        print(json.dumps({"ok": False, "error": "could not detect source language"}))
+        raise SystemExit
+
+if frm == to:
+    print(json.dumps({"ok": True, "translated": text, "source": frm, "target": to, "engine": "offline"}))
+    raise SystemExit
+
+def find_translation(f, t):
+    installed = translator.get_installed_languages()
+    src = next((x for x in installed if x.code == f), None)
+    dst = next((x for x in installed if x.code == t), None)
+    if src is None or dst is None:
+        return None
+    try:
+        return src.get_translation(dst)
+    except Exception:
+        return None
+
+translation = find_translation(frm, to)
+
+# Missing pair: download it on demand (needs network once, ~100MB).
+if translation is None:
+    try:
+        packages.update_package_index()
+        available = packages.get_available_packages()
+        pkg = next((p for p in available if p.from_code == frm and p.to_code == to), None)
+        if pkg is None:
+            print(json.dumps({"ok": False, "error": "no offline model for %s to %s" % (frm, to)}))
+            raise SystemExit
+        pkg.install()
+        translation = find_translation(frm, to)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": "could not download offline model (%s) — connect and retry" % e}))
+        raise SystemExit
+
+if translation is None:
+    print(json.dumps({"ok": False, "error": "offline model %s to %s unavailable" % (frm, to)}))
+    raise SystemExit
+
+try:
+    out = translation.translate(text)
+except Exception as e:
+    print(json.dumps({"ok": False, "error": "offline translation failed (%s)" % e}))
+    raise SystemExit
+
+print(json.dumps({
+    "ok": True,
+    "translated": str(out).strip(),
+    "source": frm,
+    "target": to,
+    "engine": "offline",
+}))
+PY
+}
+
+case "$ENGINE" in
+  online) online_translate ;;
+  offline) offline_translate ;;
+  *)
+    echo '{"ok": false, "error": "unknown engine (use online|offline)"}'
+    exit 0 ;;
+esac

@@ -5,6 +5,42 @@ type text, hit `Enter` — the translation appears below, ready to copy.
 
 ![Translate overlay in action](screenshots/translate.png)
 
+## Engines: online and offline
+
+The overlay has an **Engine** selector with two backends:
+
+| Engine | How | Notes |
+|---|---|---|
+| **Online** (default) | Free MyMemory web API, no key | Needs network; anonymous daily quota; quota errors surface in the output card |
+| **Offline** | On-device Argos Translate models | No network after setup; works on planes and behind firewalls; first translation per session takes a few seconds while models load |
+
+![Offline engine with on-device models](screenshots/translate-offline.png)
+
+> Note: Google ML Kit is Android/iOS-only and has no Linux build — Argos
+> Translate is the equivalent on-device NMT tech on the desktop.
+
+### Offline setup
+
+No root needed. Install `uv`, create a venv, install the engine, download models:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv ~/.local/share/carlos.translate/venv
+uv pip install --python ~/.local/share/carlos.translate/venv/bin/python \
+  argostranslate langdetect
+export PATH="$HOME/.local/share/carlos.translate/venv/bin:$PATH"
+argospm update
+# one ~100MB package per direction; es/pt/fr/de <-> en shown here:
+for p in en_es es_en en_pt pt_en en_fr fr_en en_de de_en; do
+  argospm install translate-$p
+done
+```
+
+Other pairs download **on demand** (needs network once): pick any language
+combo in the widget and the helper fetches the model automatically. Source
+auto-detect offline uses `langdetect` locally. Models live in
+`~/.local/share/argos-translate` (~1GB for the 8 pairs above).
+
 ## Features
 
 - **Overlay summoned with `SUPER+T`** — centered modal card on a scrim, `Esc` or click-outside to dismiss
@@ -80,14 +116,21 @@ Prefill / script it:
 omarchy-shell shell toggle carlos.translate
 # Open with text (translates immediately), explicit languages optional
 omarchy-shell shell summon carlos.translate '{"text":"Good morning!","source":"auto","target":"es"}'
+# Offline engine from the start
+omarchy-shell shell summon carlos.translate '{"text":"ola","source":"pt","target":"en","engine":"offline"}'
+# Helper directly (either engine)
+~/.config/omarchy/plugins/carlos.translate/bin/translate --to en --from pt "ola"
+~/.config/omarchy/plugins/carlos.translate/bin/translate --to en --engine offline "ola"
 ```
 
 ## How it works
 
 - `Translate.qml` — overlay UI (panel/overlay plugin, `keepLoaded: true`)
-- `bin/translate` — helper: `--to <lang> [--from <lang>] <text>`, always prints
-  a single JSON object (`{"ok": true, "translated": …, "source": …}`) parsed from
-  `https://api.mymemory.translated.net/get`
+- `bin/translate` — helper: `--to <lang> [--from <lang>] [--engine online|offline] <text>`,
+  always prints a single JSON object
+  (`{"ok": true, "translated": …, "source": …, "engine": …}`).
+  Online path parses `https://api.mymemory.translated.net/get`; offline path
+  drives the Argos venv (`~/.local/share/carlos.translate/venv`).
 - `manifest.json` — plugin manifest (`id: carlos.translate`, kind `overlay`)
 
 Notes:
