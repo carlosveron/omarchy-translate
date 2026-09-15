@@ -95,6 +95,8 @@ omarchy plugin enable carlos.translate
 -- SUPER+T opens the translate overlay (was: toggle window floating/tiling).
 hl.unbind("SUPER + T")
 o.bind("SUPER + T", "Translate", "omarchy-shell shell toggle carlos.translate")
+-- SUPER+SHIFT+T OCRs a screen region straight into the translator.
+o.bind("SUPER + SHIFT + T", "Translate from screen", "/home/carlos/.config/omarchy/plugins/carlos.translate/bin/ocr-translate")
 ```
 
 Then validate: `hyprctl reload && hyprctl configerrors`.
@@ -116,6 +118,15 @@ hl.layer_rule({ match = { namespace = "^carlos-translate$" }, no_anim = true, an
 | Swap languages | ⇄ button between the selectors |
 | Copy result | Copy button in the output card |
 | Clear input | ✕ button inside the input card |
+| OCR from screen | Scan button in the input card, or `SUPER+SHIFT+T` anywhere |
+
+The scan button (and `SUPER+SHIFT+T`) hides the overlay, lets you select a
+screen region, OCRs it with tesseract (same pipeline as Omarchy's
+`Capture → Text`: hyprpicker freeze + slurp + grim), and drops the recognized
+text into the input — translating immediately. Cancelling the selection just
+reopens the widget. Only `eng` tesseract data ships by default; install more
+(e.g. `omarchy pkg add tesseract-data-por` in a terminal) and set
+`OMARCHY_OCR_LANGS="eng+por"` for better non-English captures.
 
 Prefill / script it:
 
@@ -139,6 +150,10 @@ omarchy-shell shell summon carlos.translate '{"text":"ola","source":"pt","target
   (`{"ok": true, "translated": …, "source": …, "engine": …}`).
   Online path parses `https://api.mymemory.translated.net/get`; offline path
   drives the Argos venv (`~/.local/share/carlos.translate/venv`).
+- `bin/ocr-text` — prints OCR'd text of a screen region to stdout (exit 1 on
+  cancel/empty); used by the in-widget scan button
+- `bin/ocr-translate` — OCR a region, then summon the widget with the result
+  (the `SUPER+SHIFT+T` binding)
 - `manifest.json` — plugin manifest (`id: carlos.translate`, kind `overlay`)
 
 Notes:

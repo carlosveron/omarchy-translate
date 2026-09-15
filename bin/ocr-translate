@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# carlos.translate — OCR a screen region, then open the translator with it.
+# Bound to SUPER+SHIFT+T. Silent no-op when the selection is cancelled.
+set -u
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEXT="$("$DIR/ocr-text")" || exit 0
+[[ -z "$TEXT" ]] && exit 0
+
+export OCR_TEXT="$TEXT"
+python3 -c '
+import json, os, subprocess
+payload = json.dumps({"text": os.environ.get("OCR_TEXT", ""), "source": "auto"})
+subprocess.run(["omarchy-shell", "shell", "summon", "carlos.translate", payload],
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+exit 0

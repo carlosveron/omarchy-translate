@@ -39,6 +39,9 @@ Item {
   readonly property string helper: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/carlos.translate/bin/translate"
 
+  readonly property string ocrHelper: Quickshell.env("HOME")
+    + "/.config/omarchy/plugins/carlos.translate/bin/ocr-text"
+
   property int contentMargin: Style.space(20)
   property int contentSpacing: Style.space(12)
   property int cardRadius: Math.max(16, Style.cornerRadius + 4)
@@ -174,6 +177,28 @@ Item {
     copyFeedbackTimer.restart()
   }
 
+  // OCR a screen region into the input: hide the overlay so the region
+  // picker sees the desktop, then come back with the recognized text and
+  // translate it. Cancelled/empty selections just reopen silently.
+  function captureScreenText() {
+    if (ocrProc.running) return
+    root.close()
+    ocrProc.running = true
+  }
+
+  function applyOcrText(payload) {
+    var t = String(payload || "").trim()
+    root.opened = true
+    Qt.callLater(function() {
+      if (!root.opened) return
+      if (t !== "") {
+        inputArea.text = t
+        root.doTranslate()
+      }
+      inputArea.forceActiveFocus()
+    })
+  }
+
   Timer {
     id: copyFeedbackTimer
     interval: 1600
@@ -209,6 +234,20 @@ Item {
         root.isLoading = false
         if (root.errorText === "") root.errorText = "translator exited (" + exitCode + ")"
       }
+    }
+  }
+
+  Process {
+    id: ocrProc
+    command: [root.ocrHelper]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyOcrText(text)
+    }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function() {
+      // Collector already reopened on output; this covers silent exits.
+      if (!root.opened) root.opened = true
     }
   }
 
@@ -587,6 +626,38 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(8)
+
+                // OCR from screen button
+                Rectangle {
+                  width: Style.space(18)
+                  height: Style.space(18)
+                  radius: Style.space(9)
+                  anchors.verticalCenter: parent.verticalCenter
+                  color: ocrHover.containsMouse ? Style.hoverFill : "transparent"
+
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "󰴑"
+                    color: ocrHover.containsMouse ? Color.accent : Color.muted
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    id: ocrHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.captureScreenText()
+                  }
+
+                  PanelToolTip {
+                    visible: ocrHover.containsMouse
+                    text: "Capture text from screen"
+                    fontFamily: Style.font.family
+                  }
+                }
 
                 // Quick Clear button
                 Rectangle {

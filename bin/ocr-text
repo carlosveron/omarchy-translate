@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# carlos.translate OCR helper — print OCR'd text of a screen region to stdout.
+#
+# Same capture pipeline as `omarchy capture text` (hyprpicker freeze + slurp
+# region + grim + tesseract), but prints to stdout instead of wl-copy so
+# callers can feed it straight into the translator.
+#
+# Exit 1 (no output) when the user cancels the selection or no text is found.
+# Respects OMARCHY_OCR_LANGS (default "eng"); install more tesseract data
+# (e.g. tesseract-data-por) and export OMARCHY_OCR_LANGS="eng+por" to help
+# non-English screenshots.
+set -u
+
+cleanup_freeze() {
+  [[ -n $PID ]] && kill $PID 2>/dev/null
+}
+trap cleanup_freeze EXIT
+
+hyprpicker -r -z >/dev/null 2>&1 &
+PID=$!
+sleep .1
+SELECTION=$(slurp 2>/dev/null)
+
+[[ -z $SELECTION ]] && exit 1
+
+TEXT=$(grim -g "$SELECTION" - | tesseract stdin stdout --oem 1 --psm 6 -l "${OMARCHY_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
+TEXT="$(printf '%s' "$TEXT" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+[[ -z $TEXT ]] && exit 1
+printf '%s' "$TEXT"
