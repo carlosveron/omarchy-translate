@@ -90,12 +90,22 @@ Item {
     return code
   }
 
+  // The qs.Ui Dropdown assigns its own `value` on every manual pick, which
+  // severs the external `value:` binding — so any programmatic language
+  // change must re-sync the dropdowns explicitly or labels go stale.
+  function syncDropdowns() {
+    sourceDropdown.value = root.sourceLang
+    targetDropdown.value = root.targetLang
+    engineDropdown.value = root.engine
+  }
+
   function open(payloadJson) {
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) { payload = {} }
     if (payload.target) root.targetLang = String(payload.target)
     if (payload.source) root.sourceLang = String(payload.source)
     if (payload.engine) root.engine = String(payload.engine)
+    root.syncDropdowns()
     root.opened = true
     root.translatedText = ""
     root.detectedSource = ""
@@ -136,6 +146,7 @@ Item {
     var oldTarget = root.targetLang
     root.sourceLang = oldTarget
     root.targetLang = oldSource === "auto" ? "en" : oldSource
+    root.syncDropdowns()
     root.swapRotation += 180
 
     // If there is already translated output, swap input with output and retranslate
