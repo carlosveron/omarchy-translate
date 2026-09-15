@@ -13,8 +13,10 @@
 #             Needs the venv at ~/.local/share/carlos.translate/venv plus
 #             language packages (see README). Missing es/pt/fr/de<->en pairs
 #             are downloaded on demand (needs network once, ~100MB each).
-#   google  — Google Translate, via the `trans` CLI when installed
-#             (omarchy pkg add translate-shell), else via the Cloud API when
+#   google  — Google Translate. Free path first: the `googletrans` Python
+#             library (works out of the box, no key, no system package).
+#             Falls back to the `trans` CLI when installed
+#             (omarchy pkg add translate-shell), then to the Cloud API when
 #             GOOGLE_TRANSLATE_API_KEY is set.
 #
 # Output is always a single JSON object on stdout:
@@ -248,7 +250,44 @@ google_translate() {
     from="auto"
   fi
 
-  # Path 1: translate-shell CLI (free, no key).
+  # Path 1 (free): googletrans library — no key, no system package.
+  local venv_py="$HOME/.local/share/carlos.translate/venv/bin/python"
+  local gpy=""
+  if [[ -x "$venv_py" ]] && "$venv_py" -c "import googletrans" 2>/dev/null; then
+    gpy="$venv_py"
+  elif python3 -c "import googletrans" 2>/dev/null; then
+    gpy="python3"
+  fi
+  if [[ -n "$gpy" ]]; then
+    export GOOGLE_FROM="$(printf '%s' "$from" | tr '[:upper:]' '[:lower:]')"
+    export GOOGLE_TO="$(printf '%s' "$TRANSLATE_TO" | tr '[:upper:]' '[:lower:]')"
+    if "$gpy" - 2>/dev/null <<'PY'
+import asyncio, json, os
+
+async def main():
+    from googletrans import Translator
+    text = os.environ.get("TRANSLATE_TEXT", "")
+    frm = os.environ.get("GOOGLE_FROM", "auto") or "auto"
+    to = os.environ.get("GOOGLE_TO", "en") or "en"
+    async with Translator() as t:
+        r = await asyncio.wait_for(
+            t.translate(text, src=frm, dest=to), timeout=25)
+        print(json.dumps({
+            "ok": True,
+            "translated": str(r.text or "").strip(),
+            "source": str(getattr(r, "src", "") or ""),
+            "target": to,
+            "engine": "google"}))
+
+asyncio.run(main())
+PY
+    then
+      exit 0
+    fi
+    # googletrans failed (rate-limited/blocked?) — try the next path.
+  fi
+
+  # Path 2 (free): translate-shell CLI.
   if command -v trans >/dev/null 2>&1; then
     local args=(-b)
     if [[ -n "$from" && "$from" != "auto" ]]; then

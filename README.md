@@ -19,15 +19,20 @@ The overlay has an **Engine** selector with two backends:
 
 ### Google engine
 
-Two paths, tried in order:
+Three paths, tried in order:
 
-1. **Free — `translate-shell`** (recommended). It's in Arch's official repos,
-   Google-backed, no key. Run once in a terminal (needs sudo):
+1. **Free — `googletrans` library** (works out of the box). Add it to the
+   same venv from the offline setup:
+   ```bash
+   uv pip install --python ~/.local/share/carlos.translate/venv/bin/python googletrans
+   ```
+   No key, no system package, auto-detection included.
+2. **Free — `translate-shell`**. In Arch's official repos, Google-backed, no
+   key. Run once in a terminal (needs sudo):
    ```bash
    omarchy pkg add translate-shell
    ```
-   The widget then uses `trans -b` under the hood.
-2. **Cloud API key** — if you have a billing-enabled Google Cloud key:
+3. **Cloud API key** — if you have a billing-enabled Google Cloud key:
    ```bash
    # persist it, e.g. in ~/.config/hypr/envs.lua or your shell rc:
    export GOOGLE_TRANSLATE_API_KEY="…"
@@ -35,7 +40,7 @@ Two paths, tried in order:
    The widget calls `translation.googleapis.com/language/translate/v2` and
    decodes the response (including HTML entities and the detected language).
 
-Without either, the output card tells you exactly what's missing.
+Without any of them, the output card tells you exactly what's missing.
 
 > Note: Google ML Kit is Android/iOS-only and has no Linux build — Argos
 > Translate (the Offline engine above) is the equivalent on-device NMT tech
