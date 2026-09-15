@@ -72,7 +72,8 @@ Item {
 
   readonly property var engineOptions: [
     { value: "online", label: "Online" },
-    { value: "offline", label: "Offline" }
+    { value: "offline", label: "Offline" },
+    { value: "google", label: "Google" }
   ]
 
   function langLabel(code) {
@@ -214,11 +215,13 @@ Item {
   }
 
   readonly property string outputMeta: {
-    if (root.translatedText !== "" && root.sourceLang === "auto" && root.detectedSource !== "")
-      return "Detected: " + root.langLabel(root.detectedSource) + (root.engine === "offline" ? " · offline" : "")
-    if (root.translatedText !== "" && root.engine === "offline")
-      return "offline"
-    return ""
+    if (root.translatedText === "") return ""
+    var parts = []
+    if (root.sourceLang === "auto" && root.detectedSource !== "")
+      parts.push("Detected: " + root.langLabel(root.detectedSource))
+    if (root.engine === "offline") parts.push("offline")
+    else if (root.engine === "google") parts.push("google")
+    return parts.join(" · ")
   }
 
   Process {
@@ -534,7 +537,8 @@ Item {
             Text {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
-              text: root.engine === "offline" ? "on-device models" : "free web API"
+              text: root.engine === "offline" ? "on-device models"
+                : (root.engine === "google" ? "Google" : "free web API")
               color: Color.muted
               font.family: Style.font.family
               font.pixelSize: Style.font.caption

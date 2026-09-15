@@ -2,7 +2,7 @@
 # carlos.translate helper — translation with pluggable engines.
 #
 # Usage:
-#   translate --to <lang> [--from <lang>] [--engine online|offline] <text...>
+#   translate --to <lang> [--from <lang>] [--engine online|offline|google] <text...>
 #   translate --to es --from auto "Hello world"
 #   translate --to en --from pt --engine offline "gatinhando"
 #   echo "Hello" | translate --to es
@@ -13,6 +13,9 @@
 #             Needs the venv at ~/.local/share/carlos.translate/venv plus
 #             language packages (see README). Missing es/pt/fr/de<->en pairs
 #             are downloaded on demand (needs network once, ~100MB each).
+#   google  — Google Translate, via the `trans` CLI when installed
+#             (omarchy pkg add translate-shell), else via the Cloud API when
+#             GOOGLE_TRANSLATE_API_KEY is set.
 #
 # Output is always a single JSON object on stdout:
 #   {"ok": true, "translated": "...", "source": "en", "target": "es", "engine": "online"}
@@ -239,10 +242,109 @@ print(json.dumps({
 PY
 }
 
+google_translate() {
+  local from="$TRANSLATE_FROM"
+  if [[ "$from" == "autodetect" ]]; then
+    from="auto"
+  fi
+
+  # Path 1: translate-shell CLI (free, no key).
+  if command -v trans >/dev/null 2>&1; then
+    local args=(-b)
+    if [[ -n "$from" && "$from" != "auto" ]]; then
+      args+=(-s "$from")
+    fi
+    args+=(-t "$TRANSLATE_TO" "$TRANSLATE_TEXT")
+    local out
+    # TERM=dumb keeps trans from emitting color codes.
+    out="$(TERM=dumb trans "${args[@]}" 2>/dev/null)"
+    local status=$?
+    out="$(printf '%s' "$out" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if (( status == 0 )) && [[ -n "$out" ]]; then
+      export GOOGLE_OUT="$out" GOOGLE_FROM="$from"
+      python3 -c 'import json, os; print(json.dumps({
+        "ok": True,
+        "translated": os.environ.get("GOOGLE_OUT", ""),
+        "source": "" if os.environ.get("GOOGLE_FROM", "auto") == "auto" else os.environ.get("GOOGLE_FROM", ""),
+        "target": os.environ.get("TRANSLATE_TO", ""),
+        "engine": "google"}))'
+      exit 0
+    fi
+    # trans failed (blocked/network) — fall through to the Cloud API.
+  fi
+
+  # Path 2: Google Cloud Translation API (needs billing-enabled key).
+  if [[ -z "${GOOGLE_TRANSLATE_API_KEY:-}" ]]; then
+    echo '{"ok": false, "error": "google engine needs translate-shell (omarchy pkg add translate-shell) or GOOGLE_TRANSLATE_API_KEY"}'
+    exit 0
+  fi
+
+  local response
+  if [[ -n "$from" && "$from" != "auto" ]]; then
+    response="$(curl -s --max-time 20 -X POST \
+      --data-urlencode "q=$TRANSLATE_TEXT" \
+      --data-urlencode "target=$TRANSLATE_TO" \
+      --data-urlencode "source=$from" \
+      --data-urlencode "format=text" \
+      --data-urlencode "key=$GOOGLE_TRANSLATE_API_KEY" \
+      "https://translation.googleapis.com/language/translate/v2" 2>/dev/null)"
+  else
+    response="$(curl -s --max-time 20 -X POST \
+      --data-urlencode "q=$TRANSLATE_TEXT" \
+      --data-urlencode "target=$TRANSLATE_TO" \
+      --data-urlencode "format=text" \
+      --data-urlencode "key=$GOOGLE_TRANSLATE_API_KEY" \
+      "https://translation.googleapis.com/language/translate/v2" 2>/dev/null)"
+  fi
+  local curl_status=$?
+
+  if (( curl_status != 0 )) || [[ -z "$response" ]]; then
+    python3 -c 'import json; print(json.dumps({"ok": False, "error": "network error — check connection"}))'
+    exit 0
+  fi
+
+  export TRANSLATE_RESPONSE="$response"
+  python3 <<'PY'
+import html, json, os
+
+try:
+    data = json.loads(os.environ.get("TRANSLATE_RESPONSE", ""))
+except Exception:
+    print(json.dumps({"ok": False, "error": "bad response from google"}))
+    raise SystemExit
+
+err = (data.get("error") or {}).get("message", "")
+if err:
+    print(json.dumps({"ok": False, "error": "google: " + str(err)[:160]}))
+    raise SystemExit
+
+try:
+    first = (data.get("data") or {}).get("translations", [])[0]
+    translated = html.unescape(str(first.get("translatedText", "")))
+    detected = str(first.get("detectedSourceLanguage", "") or "")
+except Exception:
+    print(json.dumps({"ok": False, "error": "bad response from google"}))
+    raise SystemExit
+
+if not translated.strip():
+    print(json.dumps({"ok": False, "error": "google returned no translation"}))
+    raise SystemExit
+
+print(json.dumps({
+    "ok": True,
+    "translated": translated.strip(),
+    "source": detected,
+    "target": os.environ.get("TRANSLATE_TO", ""),
+    "engine": "google",
+}))
+PY
+}
+
 case "$ENGINE" in
   online) online_translate ;;
   offline) offline_translate ;;
+  google) google_translate ;;
   *)
-    echo '{"ok": false, "error": "unknown engine (use online|offline)"}'
+    echo '{"ok": false, "error": "unknown engine (use online|offline|google)"}'
     exit 0 ;;
 esac

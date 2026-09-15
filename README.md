@@ -13,11 +13,33 @@ The overlay has an **Engine** selector with two backends:
 |---|---|---|
 | **Online** (default) | Free MyMemory web API, no key | Needs network; anonymous daily quota; quota errors surface in the output card |
 | **Offline** | On-device Argos Translate models | No network after setup; works on planes and behind firewalls; first translation per session takes a few seconds while models load |
+| **Google** | Free via `translate-shell`, or Cloud API with key | See below |
 
 ![Offline engine with on-device models](screenshots/translate-offline.png)
 
+### Google engine
+
+Two paths, tried in order:
+
+1. **Free — `translate-shell`** (recommended). It's in Arch's official repos,
+   Google-backed, no key. Run once in a terminal (needs sudo):
+   ```bash
+   omarchy pkg add translate-shell
+   ```
+   The widget then uses `trans -b` under the hood.
+2. **Cloud API key** — if you have a billing-enabled Google Cloud key:
+   ```bash
+   # persist it, e.g. in ~/.config/hypr/envs.lua or your shell rc:
+   export GOOGLE_TRANSLATE_API_KEY="…"
+   ```
+   The widget calls `translation.googleapis.com/language/translate/v2` and
+   decodes the response (including HTML entities and the detected language).
+
+Without either, the output card tells you exactly what's missing.
+
 > Note: Google ML Kit is Android/iOS-only and has no Linux build — Argos
-> Translate is the equivalent on-device NMT tech on the desktop.
+> Translate (the Offline engine above) is the equivalent on-device NMT tech
+> on the desktop.
 
 ### Offline setup
 
