@@ -41,6 +41,14 @@ combo in the widget and the helper fetches the model automatically. Source
 auto-detect offline uses `langdetect` locally. Models live in
 `~/.local/share/argos-translate` (~1GB for the 8 pairs above).
 
+The helper prefers a system install when one provides both Python modules —
+if you ever install Argos as an Omarchy package (e.g. `omarchy pkg aur add
+argos-translate` in a terminal, plus a `langdetect` equivalent), the widget
+uses it automatically and the venv is just a fallback. Language models are
+shared via `~/.local/share/argos-translate` either way, so nothing is
+downloaded twice. (Arch's official repos only carry `translate-shell`,
+which is online-only, so the venv remains the recommended path.)
+
 ## Features
 
 - **Overlay summoned with `SUPER+T`** — centered modal card on a scrim, `Esc` or click-outside to dismiss
