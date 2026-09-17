@@ -76,6 +76,23 @@ Item {
     { value: "google", label: "Google" }
   ]
 
+  // Ctrl+1..9 selects the Nth engine in dropdown order.
+  function selectEngineByIndex(i) {
+    if (i < 0 || i >= root.engineOptions.length) return
+    var v = String(root.engineOptions[i].value)
+    if (root.engine !== v) {
+      root.engine = v
+      root.syncDropdowns()
+    }
+  }
+
+  function engineHint() {
+    var parts = []
+    for (var i = 0; i < root.engineOptions.length && i < 9; i++)
+      parts.push("Ctrl+" + (i + 1) + " " + root.engineOptions[i].label)
+    return parts.join(" · ")
+  }
+
   function langLabel(code) {
     if (!code) return ""
     var c = String(code).trim().toLowerCase()
@@ -294,6 +311,18 @@ Item {
         panel.height - Style.gapsOut * 2)
       anchors.centerIn: parent
       Keys.onEscapePressed: root.dismiss()
+      // Catch-all so Ctrl+Tab swaps even when a dropdown/button owns focus.
+      Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Tab && (event.modifiers & Qt.ControlModifier)) {
+          root.swapLangs()
+          event.accepted = true
+        } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9
+            && (event.modifiers & Qt.ControlModifier)
+            && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier | Qt.MetaModifier))) {
+          root.selectEngineByIndex(event.key - Qt.Key_1)
+          event.accepted = true
+        }
+      }
 
       // Ambient accent glow
       Rectangle {
@@ -492,7 +521,7 @@ Item {
 
               PanelToolTip {
                 visible: swapMouse.containsMouse
-                text: "Swap languages"
+                text: "Swap languages (Ctrl+Tab)"
                 fontFamily: Style.font.family
               }
             }
@@ -548,12 +577,12 @@ Item {
             Text {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
-              text: root.engine === "offline" ? "on-device models"
-                : (root.engine === "google" ? "Google" : "free web API")
+              text: root.engineHint()
               color: Color.muted
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               opacity: 0.75
+              elide: Text.ElideRight
             }
           }
 
@@ -611,6 +640,16 @@ Item {
                       root.doTranslate()
                       event.accepted = true
                     }
+                  } else if (event.key === Qt.Key_Tab && (event.modifiers & Qt.ControlModifier)) {
+                    // Ctrl+Tab swaps source/target languages
+                    root.swapLangs()
+                    event.accepted = true
+                  } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9
+                      && (event.modifiers & Qt.ControlModifier)
+                      && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier | Qt.MetaModifier))) {
+                    // Ctrl+1..9 switches the translation engine
+                    root.selectEngineByIndex(event.key - Qt.Key_1)
+                    event.accepted = true
                   }
                 }
               }

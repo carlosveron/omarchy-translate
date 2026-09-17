@@ -142,7 +142,8 @@ hl.layer_rule({ match = { namespace = "^carlos-translate$" }, no_anim = true, an
 | Open / close | `SUPER+T` (or `Esc`, or click the scrim) |
 | Translate | `Enter` or the Translate button |
 | Newline | `Shift+Enter` |
-| Swap languages | ⇄ button between the selectors |
+| Swap languages | ⇄ button or `Ctrl+Tab` while the widget is focused |
+| Switch engine | `Ctrl+1` Online, `Ctrl+2` Offline, `Ctrl+3` Google |
 | Copy result | Copy button in the output card |
 | Clear input | ✕ button inside the input card |
 | OCR from screen | Scan button in the input card, or `SUPER+SHIFT+T` anywhere |
