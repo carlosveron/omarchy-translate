@@ -19,10 +19,13 @@ The overlay has an **Engine** selector with two backends:
 
 ### Google engine
 
-Three paths, tried in order:
+Four paths, tried in order:
 
-1. **Free — `googletrans` library** (works out of the box). Add it to the
-   same venv from the offline setup:
+1. **Free — direct GTX endpoint** (Google's public `translate.google.com`
+   endpoint with `client=gtx`, a browser User-Agent, 200ms pacing, 3 attempts
+   with exponential backoff). No key, no packages — just `curl`.
+2. **Free — `googletrans` library**. Add it to the same venv from the
+   offline setup:
    ```bash
    uv pip install --python ~/.local/share/carlos.translate/venv/bin/python googletrans
    ```
@@ -32,13 +35,13 @@ Three paths, tried in order:
    through to the next path rather than showing a fake result; if the widget
    ever shows an "unchanged — try another engine" pill, that's what's
    happening.
-2. **Free — `translate-shell`**. In Arch's official repos, Google-backed, no
+3. **Free — `translate-shell`**. In Arch's official repos, Google-backed, no
    key, and usually more resistant to the rate limiting above. Run once in a
    terminal (needs sudo):
    ```bash
    omarchy pkg add translate-shell
    ```
-3. **Cloud API key** — if you have a billing-enabled Google Cloud key:
+4. **Cloud API key** — if you have a billing-enabled Google Cloud key:
    ```bash
    # persist it, e.g. in ~/.config/hypr/envs.lua or your shell rc:
    export GOOGLE_TRANSLATE_API_KEY="…"

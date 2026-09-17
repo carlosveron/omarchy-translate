@@ -250,7 +250,14 @@ google_translate() {
     from="auto"
   fi
 
-  # Path 1 (free): googletrans library — no key, no system package.
+  # Path 1 (free): Google's public GTX endpoint, same recipe as the
+  # local_reader app — translate.google.com (NOT translate.googleapis.com),
+  # client=gtx, browser User-Agent, paced requests, retries with backoff.
+  if google_gtx_direct "$from" "$TRANSLATE_TO" "$TRANSLATE_TEXT"; then
+    exit 0
+  fi
+
+  # Path 2 (free): googletrans library — no key, no system package.
   local venv_py="$HOME/.local/share/carlos.translate/venv/bin/python"
   local gpy=""
   if [[ -x "$venv_py" ]] && "$venv_py" -c "import googletrans" 2>/dev/null; then
@@ -384,6 +391,87 @@ print(json.dumps({
     "engine": "google",
 }))
 PY
+}
+
+# Direct GTX request, mirroring local_reader's TextTranslator: browser
+# User-Agent, 200ms pacing between requests, up to 3 attempts with
+# exponential backoff (1.5s, 3s), 15s timeout. Retries 429/5xx and network
+# errors; the "Sorry" block page fails fast (retries won't clear it).
+# Prints the result JSON and returns 0 on success, 1 otherwise.
+google_gtx_direct() {
+  local from="$1" to="$2" text="$3"
+  local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/carlos.translate"
+  local gate="$state_dir/gtx_last_ms"
+  mkdir -p "$state_dir" 2>/dev/null
+
+  local attempt body code curl_status now last elapsed
+  for attempt in 0 1 2; do
+    # Pace: at least 200ms since the previous request.
+    now=$(date +%s%3N)
+    if [[ -f "$gate" ]]; then
+      last=$(cat "$gate" 2>/dev/null || echo 0)
+      elapsed=$((now - last))
+      if (( elapsed < 200 )); then
+        sleep "$(awk "BEGIN {print (200 - $elapsed)/1000}")"
+        now=$(date +%s%3N)
+      fi
+    fi
+    printf '%s' "$now" > "$gate" 2>/dev/null
+
+    body="$(curl -s --max-time 15 --get \
+      -A "$ua" \
+      --data-urlencode "client=gtx" \
+      --data-urlencode "sl=$from" \
+      --data-urlencode "tl=$to" \
+      --data-urlencode "dt=t" \
+      --data-urlencode "q=$text" \
+      -w '\n%{http_code}' \
+      "https://translate.google.com/translate_a/single" 2>/dev/null)"
+    curl_status=$?
+    code="$(printf '%s' "$body" | tail -n 1)"
+    body="$(printf '%s' "$body" | sed '$d')"
+
+    if (( curl_status == 0 )) && [[ "$code" == "200" ]]; then
+      # Block page comes back as 200 + HTML: fail fast, retries won't help.
+      if [[ "$body" == *"<title>Sorry"* ]]; then
+        return 1
+      fi
+      export GTX_BODY="$body" GTX_TO="$to"
+      if python3 <<'PY'
+import json, os, sys
+try:
+    data = json.loads(os.environ.get("GTX_BODY", ""))
+except Exception:
+    sys.exit(7)
+segs = data[0] if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list) else None
+det = data[2] if isinstance(data, list) and len(data) > 2 and isinstance(data[2], str) else ""
+out = "".join(s[0] for s in segs
+              if isinstance(s, list) and len(s) > 0 and isinstance(s[0], str)).strip() \
+      if segs is not None else ""
+if not out:
+    sys.exit(7)
+print(json.dumps({"ok": True, "translated": out,
+                  "source": det, "target": os.environ.get("GTX_TO", ""),
+                  "engine": "google"}))
+PY
+      then
+        return 0
+      fi
+      # Empty/unparseable 200 body is not transient — stop retrying.
+      return 1
+    fi
+
+    # Retryable: curl errors, 429, 5xx. Other 4xx are permanent.
+    if [[ "$code" == "429" ]] || [[ "$code" == 5* ]] || (( curl_status != 0 )); then
+      if (( attempt < 2 )); then
+        sleep "$(awk "BEGIN {print 1.5 * (2 ^ $attempt)}")"
+        continue
+      fi
+    fi
+    return 1
+  done
+  return 1
 }
 
 case "$ENGINE" in
