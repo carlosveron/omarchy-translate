@@ -26,9 +26,15 @@ Three paths, tried in order:
    ```bash
    uv pip install --python ~/.local/share/carlos.translate/venv/bin/python googletrans
    ```
-   No key, no system package, auto-detection included.
+   No key, no system package, auto-detection included. Caveat: Google
+   rate-limits its free endpoints per IP — when blocked, they silently echo
+   the input instead of translating. The helper detects echoes and falls
+   through to the next path rather than showing a fake result; if the widget
+   ever shows an "unchanged — try another engine" pill, that's what's
+   happening.
 2. **Free — `translate-shell`**. In Arch's official repos, Google-backed, no
-   key. Run once in a terminal (needs sudo):
+   key, and usually more resistant to the rate limiting above. Run once in a
+   terminal (needs sudo):
    ```bash
    omarchy pkg add translate-shell
    ```

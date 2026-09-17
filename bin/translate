@@ -262,7 +262,7 @@ google_translate() {
     export GOOGLE_FROM="$(printf '%s' "$from" | tr '[:upper:]' '[:lower:]')"
     export GOOGLE_TO="$(printf '%s' "$TRANSLATE_TO" | tr '[:upper:]' '[:lower:]')"
     if "$gpy" - 2>/dev/null <<'PY'
-import asyncio, json, os
+import asyncio, json, os, sys
 
 async def main():
     from googletrans import Translator
@@ -272,9 +272,16 @@ async def main():
     async with Translator() as t:
         r = await asyncio.wait_for(
             t.translate(text, src=frm, dest=to), timeout=25)
+        out = str(r.text or "").strip()
+        if not out:
+            sys.exit(4)
+        # Google's free endpoints soft-block by echoing the input. Never
+        # present an echo as a translation — fall through to the next path.
+        if frm != to and out.casefold() == text.strip().casefold():
+            sys.exit(3)
         print(json.dumps({
             "ok": True,
-            "translated": str(r.text or "").strip(),
+            "translated": out,
             "source": str(getattr(r, "src", "") or ""),
             "target": to,
             "engine": "google"}))
@@ -284,7 +291,7 @@ PY
     then
       exit 0
     fi
-    # googletrans failed (rate-limited/blocked?) — try the next path.
+    # googletrans failed, empty, or echoed (rate-limited?) — next path.
   fi
 
   # Path 2 (free): translate-shell CLI.

@@ -36,6 +36,15 @@ Item {
   property bool copySuccess: false
   property real swapRotation: 0
 
+  // Stale-response guards: every run is tagged with the exact request it
+  // belongs to. A response that no longer matches the live state (swap or
+  // engine change mid-flight) is dropped instead of overwriting the UI.
+  property bool pendingRetranslate: false
+  property string activeQuery: ""
+  property string activeFrom: ""
+  property string activeTo: ""
+  property string activeEngine: ""
+
   readonly property string helper: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/carlos.translate/bin/translate"
 
@@ -83,6 +92,7 @@ Item {
     if (root.engine !== v) {
       root.engine = v
       root.syncDropdowns()
+      root.requestRetranslate()
     }
   }
 
@@ -129,6 +139,7 @@ Item {
     root.errorText = ""
     root.isLoading = false
     root.copySuccess = false
+    root.pendingRetranslate = false
     if (payload.text) {
       inputArea.text = String(payload.text)
       Qt.callLater(function() {
@@ -145,6 +156,7 @@ Item {
     if (transProc.running) transProc.running = false
     root.isLoading = false
     root.copySuccess = false
+    root.pendingRetranslate = false
   }
 
   function dismiss() {
@@ -161,18 +173,19 @@ Item {
   function swapLangs() {
     var oldSource = root.sourceLang
     var oldTarget = root.targetLang
+    var hadOutput = root.translatedText !== ""
     root.sourceLang = oldTarget
     root.targetLang = oldSource === "auto" ? "en" : oldSource
     root.syncDropdowns()
     root.swapRotation += 180
 
     // If there is already translated output, swap input with output and retranslate
-    if (root.translatedText !== "" && !root.isLoading) {
+    if (hadOutput) {
       inputArea.text = root.translatedText
       root.translatedText = ""
       root.errorText = ""
-      root.doTranslate()
     }
+    root.requestRetranslate()
   }
 
   function doTranslate() {
@@ -183,11 +196,41 @@ Item {
     root.translatedText = ""
     root.detectedSource = ""
     root.copySuccess = false
+    root.activeQuery = q
+    root.activeFrom = root.sourceLang
+    root.activeTo = root.targetLang
+    root.activeEngine = root.engine
     transProc.command = [root.helper, "--to", root.targetLang, "--from", root.sourceLang, "--engine", root.engine, q]
     transProc.running = true
   }
 
+  // Retranslate the current input, queueing behind a run already in flight
+  // instead of colliding with it — its late response is dropped by the
+  // match check in applyResult, then the queued run fires.
+  function requestRetranslate() {
+    if (String(inputArea.text || "").trim() === "") return
+    if (transProc.running || root.isLoading) {
+      root.pendingRetranslate = true
+      return
+    }
+    root.doTranslate()
+  }
+
   function applyResult(payload) {
+    // Stale run (swapped language/engine mid-flight): drop it and fire
+    // whatever retranslate was queued behind it.
+    if (String(inputArea.text || "").trim() !== root.activeQuery
+        || root.sourceLang !== root.activeFrom
+        || root.targetLang !== root.activeTo
+        || root.engine !== root.activeEngine) {
+      root.isLoading = false
+      root.errorText = ""
+      if (root.pendingRetranslate) {
+        root.pendingRetranslate = false
+        root.doTranslate()
+      }
+      return
+    }
     root.isLoading = false
     var data = null
     try { data = JSON.parse(payload || "{}") } catch (e) { data = null }
@@ -195,6 +238,7 @@ Item {
       root.errorText = (data && data.error) ? String(data.error) : "translation failed"
       return
     }
+    root.errorText = ""
     root.translatedText = String(data.translated || "")
     root.detectedSource = String(data.source || "")
   }
@@ -249,6 +293,15 @@ Item {
       parts.push("Detected: " + root.langLabel(root.detectedSource))
     if (root.engine === "offline") parts.push("offline")
     else if (root.engine === "google") parts.push("google")
+    // An "unchanged" result across different languages means the engine
+    // echoed the input (free-endpoint block) — say so instead of faking it.
+    // Skipped when auto-detect found text already in the target language.
+    var srcCode = root.sourceLang === "auto" ? root.detectedSource : root.sourceLang
+    srcCode = String(srcCode || "").toLowerCase().split("-")[0]
+    var tgtCode = String(root.targetLang || "").toLowerCase().split("-")[0]
+    if (srcCode !== "" && srcCode !== tgtCode
+        && root.translatedText.trim().toLowerCase() === String(inputArea.text || "").trim().toLowerCase())
+      parts.push("unchanged — try another engine")
     return parts.join(" · ")
   }
 
@@ -261,9 +314,9 @@ Item {
     }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
-      if (root.isLoading && exitCode !== 0) {
+      if (root.isLoading && exitCode !== 0 && root.errorText === "") {
         root.isLoading = false
-        if (root.errorText === "") root.errorText = "translator exited (" + exitCode + ")"
+        root.errorText = "translator exited (" + exitCode + ")"
       }
     }
   }
@@ -480,7 +533,7 @@ Item {
               value: root.sourceLang
               rowHeight: Style.space(34)
               popupRowHeight: Style.space(30)
-              onChanged: function(v) { root.sourceLang = v }
+              onChanged: function(v) { root.sourceLang = v; root.requestRetranslate() }
             }
 
             // Circular Swap button with rotation animation
@@ -539,7 +592,7 @@ Item {
               value: root.targetLang
               rowHeight: Style.space(34)
               popupRowHeight: Style.space(30)
-              onChanged: function(v) { root.targetLang = v }
+              onChanged: function(v) { root.targetLang = v; root.requestRetranslate() }
             }
           }
 
@@ -571,7 +624,7 @@ Item {
               value: root.engine
               rowHeight: Style.space(30)
               popupRowHeight: Style.space(30)
-              onChanged: function(v) { root.engine = v }
+              onChanged: function(v) { root.engine = v; root.requestRetranslate() }
             }
 
             Text {
